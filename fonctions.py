@@ -46,3 +46,42 @@ def load_node2vec_embeddings(file_path):
 
 def bonjour():
     print("bonjour")
+    
+
+
+
+
+def plot_umap_results(embedding, labels=None):
+    """
+    Affiche le scatter plot UMAP.
+    Argument: 
+        - embedding: le résultat de fit_transform
+        - labels: (optionnel) le tableau des opinions (0, 4, -1)
+    """
+    if labels is None:
+        raise ValueError("La fonction a besoin des labels pour colorer le graph. "
+                         "Passez 'train_opinions_np' en deuxième argument.")
+
+    plt.figure(figsize=(12, 8))
+    
+    categories = {
+        0: {'color': '#e74c3c', 'label': 'Sceptique'},
+        4: {'color': '#3498db', 'label': 'Pro-climat'},
+        -1: {'color': '#bdc3c7', 'label': 'Inconnu'}
+    }
+    
+    for val, info in categories.items():
+        mask = (labels == val)
+        if np.any(mask):
+            plt.scatter(
+                embedding[mask, 0], 
+                embedding[mask, 1], 
+                c=info['color'], 
+                label=f"{info['label']} ({val})",
+                s=8, 
+                alpha=0.7
+            )
+
+    plt.title("Répartition des opinions (UMAP)", fontsize=16)
+    plt.legend(title="Opinions", markerscale=2)
+    plt.show()

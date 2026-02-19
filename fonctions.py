@@ -2,6 +2,10 @@ import pandas as pd
 import networkx as nx
 import matplotlib.pyplot as plt
 import numpy as np
+from sklearn.cluster import KMeans
+from collections import Counter
+from matplotlib.lines import Line2D
+
 
 
 def creer_graphe_twitter(fichier_liens):
@@ -85,3 +89,70 @@ def plot_umap_results(embedding, labels=None):
     plt.title("Répartition des opinions (UMAP)", fontsize=16)
     plt.legend(title="Opinions", markerscale=2)
     plt.show()
+
+
+def barycenter_precision(train_embedding, train_opinions_np):
+
+    X = np.array(train_embedding)
+    y = np.array(train_opinions_np)
+
+    # Clustering
+    clusters = KMeans(n_clusters=2, random_state=0, n_init=10).fit_predict(X)
+
+    # Barycentres
+    b0 = X[clusters == 0].mean(axis=0)
+    b1 = X[clusters == 1].mean(axis=0)
+
+    # Transformation affine (sans rotation)
+    center = (b0 + b1) / 2
+    X_centered = X - center
+
+    dist = np.linalg.norm(b0 - b1)
+    X_scaled = X_centered * (4 * np.sqrt(2) / dist)
+
+    # Classification par y = -x
+    pred_cluster = (X_scaled[:, 1] > -X_scaled[:, 0]).astype(int)
+
+    # Sécurité : vérifier que les deux classes existent
+    if len(np.unique(pred_cluster)) < 2:
+        print(" Tous les points sont du même côté de y = -x")
+        print("Précision forcée à 0.0")
+        return 0.0
+
+    # Association cluster a label
+    def majority_label(c):
+        return Counter(y[pred_cluster == c]).most_common(1)[0][0]
+
+    label_0 = majority_label(0)
+    label_1 = majority_label(1)
+
+    y_pred = np.where(pred_cluster == 0, label_0, label_1)
+
+    # Précision
+    accuracy = np.mean(y_pred == y)
+
+    # Plot
+    plt.figure(figsize=(6, 6))
+    plt.scatter(X_scaled[:, 0], X_scaled[:, 1], c=y, cmap="coolwarm", s=12)
+
+    x = np.linspace(-6, 6, 200)
+    plt.plot(x, -x, 'k--', label="y = -x")
+
+    plt.scatter(2, 2, c='green', s=140, marker='*', label='Barycentre +')
+    plt.scatter(-2, -2, c='red', s=140, marker='*', label='Barycentre -')
+
+    # Légende personnalisée pour les labels
+    legend_elements = [
+        Line2D([0], [0], marker='o', color='w', label='Pro-climat',
+               markerfacecolor='blue', markersize=8),
+        Line2D([0], [0], marker='o', color='w', label='Sceptique',
+               markerfacecolor='red', markersize=8)
+    ]
+
+    plt.legend(handles=legend_elements + plt.gca().get_legend_handles_labels()[0])
+
+    plt.title(f"Transformation barycentres → ±(2,2) | précision = {accuracy:.3f}")
+    plt.axis("equal")
+    plt.show()
+
+    return accuracy

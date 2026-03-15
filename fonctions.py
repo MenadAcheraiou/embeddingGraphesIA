@@ -156,3 +156,215 @@ def barycenter_precision(train_embedding, train_opinions_np):
     plt.show()
 
     return accuracy
+
+
+
+def barycenter_precision2(train_embedding, train_opinions_np):
+
+    emb = np.array(train_embedding)
+    opinions = np.array(train_opinions_np)
+
+    # Masques basés sur les vrais labels (pas KMeans)
+    mask_4 = (opinions == 4)
+    mask_0 = (opinions == 0)
+
+    # Barycentres des deux groupes
+    b4 = emb[mask_4].mean(axis=0)
+    b0 = emb[mask_0].mean(axis=0)
+
+    # Un seul changement de coordonnées pour tout le monde :
+    # On veut que b4 -> (2,2) et b0 -> (-2,-2)
+    # On cherche : emb_new = A @ emb + t
+    #
+    # Midpoint des barycentres -> doit aller en (0,0) : translation t = -midpoint
+    # Puis on scale/rotate pour que la distance soit bonne
+    #
+    # Solution simple : translation pour centrer, puis transformation affine
+
+    # 1) Translation : le milieu des deux barycentres va en (0,0)
+    midpoint = (b4 + b0) / 2
+    emb_centered = emb - midpoint
+
+    # Barycentres après translation
+    b4_c = b4 - midpoint  # = (b4 - b0) / 2
+    b0_c = b0 - midpoint  # = (b0 - b4) / 2
+
+    # 2) Transformation linéaire : b4_c -> (2,2) et b0_c -> (-2,-2)
+    # On note v = b4_c, on veut A @ v = (2,2)
+    # b0_c = -v donc A @ b0_c = (-2,-2) automatiquement (cohérent)
+    #
+    # A est une matrice 2x2, on résout A @ v = [2,2]
+    # avec v = b4_c : deux équations, quatre inconnues -> on cherche A symétrique
+    # ou plus simple : A = outer([2,2], v) / (v @ v)
+    # c'est la projection qui envoie v sur [2,2] mais déforme le reste
+
+    # Meilleure approche : rotation + scaling uniforme
+    # On veut que b4_c soit à distance 2*sqrt(2) dans la direction (1,1)/sqrt(2)
+    target = np.array([2.0, 2.0])
+
+    # Matrice qui envoie b4_c -> target
+    # A = target @ b4_c^T / (b4_c @ b4_c)  (rang 1, trop restrictif)
+    # -> On utilise une vraie transformation : rotation + scale uniforme
+    # scale = |target| / |b4_c|
+    # rotation : angle entre b4_c et target
+
+    norm_b4c = np.linalg.norm(b4_c)
+    norm_target = np.linalg.norm(target)
+
+    scale = norm_target / norm_b4c
+
+    # Angle de rotation
+    angle_b4c = np.arctan2(b4_c[1], b4_c[0])
+    angle_target = np.arctan2(target[1], target[0])
+    theta = angle_target - angle_b4c
+
+    cos_t, sin_t = np.cos(theta), np.sin(theta)
+    R = np.array([[cos_t, -sin_t],
+                  [sin_t,  cos_t]])
+
+    A = scale * R  # transformation unique pour tout le monde
+
+    emb_transformed = (A @ emb_centered.T).T
+
+    # Score par rapport à la droite y = -x
+    scores = emb_transformed[:, 0] + emb_transformed[:, 1]
+
+    pred_a = np.where(scores > 0, 4, 0)
+    pred_b = np.where(scores > 0, 0, 4)
+
+    acc_a = np.mean(pred_a == opinions)
+    acc_b = np.mean(pred_b == opinions)
+
+    if acc_a >= acc_b:
+        predicted_opinions = pred_a
+        accuracy = acc_a
+    else:
+        predicted_opinions = pred_b
+        accuracy = acc_b
+
+    # Plot
+    plt.figure(figsize=(6, 6))
+
+    plt.scatter(
+        emb_transformed[:, 0],
+        emb_transformed[:, 1],
+        c=predicted_opinions,
+        cmap="coolwarm",
+        s=12,
+        alpha=0.7
+    )
+
+    x = np.linspace(-6, 6, 200)
+    plt.plot(x, -x, 'k--', label="y = -x")
+
+    # Barycentres après transformation
+    b4_t = emb_transformed[mask_4].mean(axis=0)
+    b0_t = emb_transformed[mask_0].mean(axis=0)
+
+    plt.scatter(b4_t[0], b4_t[1], c='red',  s=140, marker='*', label='Barycentre pro-climat (4)')
+    plt.scatter(b0_t[0], b0_t[1], c='blue', s=140, marker='*', label='Barycentre sceptique (0)')
+    
+    legend_elements = [
+    Line2D([0], [0], marker='o', color='w', label='Pro-climat (4)',
+           markerfacecolor='red', markersize=8),
+    Line2D([0], [0], marker='o', color='w', label='Sceptique (0)',
+           markerfacecolor='blue', markersize=8),
+    Line2D([0], [0], linestyle='--', color='black', label='y = -x')
+]
+    plt.legend(handles=legend_elements)
+    plt.title(f"Transformation unique | précision = {accuracy:.3f}")
+    plt.axis("equal")
+    plt.grid(alpha=0.2)
+    plt.show()
+
+    return accuracy
+
+
+
+
+def compute_barycenter_transform(train_embedding, train_opinions_np):
+    """Calcule et retourne les paramètres de transformation depuis le train."""
+    emb = np.array(train_embedding)
+    opinions = np.array(train_opinions_np)
+
+    # On exclut les inconnus
+    mask_known = opinions != -1
+    emb_known = emb[mask_known]
+    opinions_known = opinions[mask_known]
+
+    mask_4 = (opinions_known == 4)
+    mask_0 = (opinions_known == 0)
+
+    b4 = emb_known[mask_4].mean(axis=0)
+    b0 = emb_known[mask_0].mean(axis=0)
+
+    midpoint = (b4 + b0) / 2
+    b4_c = b4 - midpoint
+
+    target = np.array([2.0, 2.0])
+    scale = np.linalg.norm(target) / np.linalg.norm(b4_c)
+
+    angle_b4c    = np.arctan2(b4_c[1], b4_c[0])
+    angle_target = np.arctan2(target[1], target[0])
+    theta = angle_target - angle_b4c
+
+    cos_t, sin_t = np.cos(theta), np.sin(theta)
+    R = np.array([[cos_t, -sin_t], [sin_t, cos_t]])
+    A = scale * R
+
+    # On retourne les paramètres, pas les données transformées
+    return {"midpoint": midpoint, "A": A}
+
+def apply_barycenter_transform(embedding, transform_params, opinions, plot=True, title=""):
+    emb = np.array(embedding)
+    opinions = np.array(opinions)
+
+    emb_transformed = (transform_params["A"] @ (emb - transform_params["midpoint"]).T).T
+
+    scores = emb_transformed[:, 0] + emb_transformed[:, 1]
+    pred_a = np.where(scores > 0, 4, 0)
+    pred_b = np.where(scores > 0, 0, 4)
+
+    mask_known = opinions != -1
+    acc_a = np.mean(pred_a[mask_known] == opinions[mask_known])
+    acc_b = np.mean(pred_b[mask_known] == opinions[mask_known])
+
+    if acc_a >= acc_b:
+        predicted_opinions = pred_a
+        accuracy = acc_a
+    else:
+        predicted_opinions = pred_b
+        accuracy = acc_b
+
+    if plot:
+        # Calcul des barycentres dans l'espace transformé
+        mask_4 = (opinions == 4)
+        mask_0 = (opinions == 0)
+        b4_t = emb_transformed[mask_4].mean(axis=0)
+        b0_t = emb_transformed[mask_0].mean(axis=0)
+
+        plt.figure(figsize=(6, 6))
+        plt.scatter(
+            emb_transformed[:, 0], emb_transformed[:, 1],
+            c=predicted_opinions, cmap="coolwarm", s=12, alpha=0.7
+        )
+        x = np.linspace(-6, 6, 200)
+        plt.plot(x, -x, 'k--')
+
+        plt.scatter(b4_t[0], b4_t[1], c='red',  s=140, marker='*', zorder=5)
+        plt.scatter(b0_t[0], b0_t[1], c='blue', s=140, marker='*', zorder=5)
+
+        legend_elements = [
+            Line2D([0], [0], marker='o', color='w', label='Pro-climat (4)',
+                   markerfacecolor='red', markersize=8),
+            Line2D([0], [0], marker='o', color='w', label='Sceptique (0)',
+                   markerfacecolor='blue', markersize=8),
+            Line2D([0], [0], linestyle='--', color='black', label='y = -x')
+        ]
+        plt.legend(handles=legend_elements)
+        plt.title(f"{title} | précision = {accuracy:.3f}")
+        plt.axis("equal")
+        plt.grid(alpha=0.2)
+        plt.show()
+
+    return accuracy
